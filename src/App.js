@@ -1,8 +1,14 @@
 import React, { useState, useEffect } from 'react';
+import ReactDOMServer from 'react-dom/server';
 import { makeStyles } from '@mui/styles';
 import { alpha } from '@mui/material/styles';
 import {
+    Paper,
+    Accordion,
+    AccordionDetails,
+    AccordionSummary,
     AppBar,
+    Avatar,
     Box,
     Button,
     CircularProgress,
@@ -20,9 +26,37 @@ import {
     Tooltip,
     Typography,
 } from "@mui/material";
+import CheckIcon from '@mui/icons-material/Check';
+import CloseIcon from '@mui/icons-material/Close';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import SearchIcon from '@mui/icons-material/Search';
 import { ForceGraph2D } from "react-force-graph";
+import colorGradient from "javascript-color-gradient";
+import moment from 'moment';
 import axios from "axios";
+import config from './config';
+
+function abbrNum(number) {
+    const decPlaces = Math.pow(10, 2);
+    const abbrev = ["k", "m", "M", "t"];
+
+    for (let i = abbrev.length - 1; i >= 0; i--) {
+        const size = Math.pow(10, (i + 1) * 3);
+
+        if (size <= number) {
+            number = Math.round(number * decPlaces / size) / decPlaces;
+
+            if ((number === 1000) && (i < abbrev.length - 1)) {
+                number = 1;
+                i++;
+            }
+            number += abbrev[i];
+
+            break;
+        }
+    }
+    return number;
+}
 
 function getDialogContent(type) {
     switch (type) {
@@ -58,13 +92,29 @@ function getDialogContent(type) {
         default:
             return <></>;
     }
-};
+}
 
 function getSize(depth) {
     if (depth === 0) return 20;
-    if (depth === 1) return 12;
-    if (depth === 2) return 8;
-    if (depth === 3) return 6;
+    if (depth === 1) return 4;
+    if (depth === 2) return 2;
+    if (depth === 3) return 0.5;
+}
+const gradient = colorGradient.setGradient("#FF4136", "2ECC40").setMidpoint(5);
+function getColor(proximity) {
+    return gradient.getColor(proximity);
+}
+function changeColorById(array, id, color) {
+    for (let i = 0; i < array.length; i++) {
+        if (array[i].id === id) {
+            array[i].color = color;
+            break;
+        }
+    }
+}
+
+function getLoadingCounter(lastTime, data) {
+    return Math.floor((lastTime - data.timeStart) / data.timeAvg);
 }
 
 const useStyles = makeStyles((theme) => ({
@@ -83,6 +133,7 @@ const useStyles = makeStyles((theme) => ({
         },
     },
     search: {
+        color: "white !important",
         position: "relative",
         borderRadius: theme.shape.borderRadius,
         backgroundColor: alpha(theme.palette.common.white, 0.15),
@@ -107,13 +158,15 @@ const useStyles = makeStyles((theme) => ({
         justifyContent: "center",
     },
     inputRoot: {
-        color: "inherit",
+        color: "white !important",
     },
     inputAdornment: {
+        color: "white !important",
         marginTop: "-4px",
         paddingLeft: `calc(1em + ${theme.spacing(4)})`,
     },
     inputInput: {
+        color: "white !important",
         padding: theme.spacing(1, 1, 1, 0),
         marginLeft: "-6px !important",
         transition: theme.transitions.create("width"),
@@ -173,6 +226,20 @@ const useStyles = makeStyles((theme) => ({
             backgroundColor: "rgba(0, 0, 0, 0.26) !important"
         },
     },
+    mainContainer: {
+        position: "relative"
+    },
+    informationPanel: {
+        position: "absolute",
+        right: 0,
+        bottom: 0,
+        padding: theme.spacing(1) + ' !important',
+        width: 350 + 'px !important'
+    },
+    informationPanelDetails: {
+        maxHeight: 350,
+        overflow: "auto"
+    },
     footer: {
         padding: theme.spacing(3, 2),
         marginTop: "auto",
@@ -194,6 +261,60 @@ const useStyles = makeStyles((theme) => ({
     textAlignCenter: {
         textAlign: "center",
     },
+    tooltipPaper: {
+        display: 'inline-block'
+    },
+    tooltipContainer: {
+        padding: theme.spacing(1) + ' !important',
+        width: 350 + 'px !important'
+    },
+    tooltipHeader: {
+        display: 'flex',
+        "& *": {
+            marginLeft: theme.spacing(1),
+            marginRight: theme.spacing(1),
+        }
+    },
+    tooltipAvatar: {
+        width: 56 + "px !important",
+        height: 56 + "px !important",
+    },
+    tooltipName: {
+        display: "flex",
+        flexDirection: "column",
+        justifyContent: "center"
+    },
+    tooltipBody: {
+        margin: theme.spacing(1, 2, 0)
+    },
+    tooltipSocialsDescription: {
+        overflow: "hidden",
+        display: "-webkit-box",
+        WebkitLineClamp: 2,
+        "-webkit-box-orient": "vertical"
+    },
+    tooltipSocialsInfo: {
+        display: "flex",
+        justifyContent: "space-between",
+        alignItems: "baseline"
+    },
+    tooltipAccountInfo: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        flexWrap: "wrap",
+        "& *": {
+            margin: theme.spacing(0, 1) + " !important"
+        }
+    },
+    tooltipInstagramPosts: {
+        display: "flex",
+        alignItems: "center",
+        overflow: "auto",
+    },
+    tooltipInstagramPost: {
+        maxWidth: "50%",
+    },
 }));
 
 function App() {
@@ -208,10 +329,11 @@ function App() {
     const [graphData, setGraphData] = useState({ nodes: [], links: [] });
     const [animationState, setAnimationState] = useState(true);
     const [instagramLookupState, seInstagramLookupState] = useState(true);
-    const [loadingData, setLoadingData] = useState({ relations: 0, timeAvg: 0, timeStart: 0, error: "" });
+    const [loadingData, setLoadingData] = useState({ relations: 0, timeAvg: 1500, timeStart: 0, error: "" });
     const [loadingTime, setLoadingTime] = useState(0);
     const [loadingState, setLoadingState] = useState(false);
     const [loadingInterval, setLoadingInterval] = useState(null);
+    const [selectedNode, setSelectedNode] = useState(null);
 
     useEffect(() => {
         function updateSize() {
@@ -226,16 +348,64 @@ function App() {
         return () => window.removeEventListener("resize", updateSize);
     }, []);
 
-    const URL = 'http://localhost:8080';
+    useEffect(() => {
+        if (!loadingState) {
+            clearLoading();
+        }
+    }, [loadingState]);
+    useEffect(() => {
+        if (loadingState && loadingData.relations > 0) {
+            startTickLoading();
+        }
+    }, [loadingData.relations]);
+    const startTickLoading = () => {
+        const interval = setInterval(() => {
+            tickLoading();
+        }, 1000);
+
+        setLoadingInterval(interval);
+    }
+    const tickLoading = () => {
+        if (getLoadingCounter(loadingTime, loadingData) > loadingData.relations) {
+            clearInterval(loadingInterval);
+            setLoadingInterval(null);
+        } else if (loadingState) {
+            setLoadingTime(Date.now());
+        }
+    };
+    const clearLoading = () => {
+        clearLoadingInterval();
+        setLoadingData({
+          relations: 0,
+          timeAvg: 0,
+          timeStart: 0,
+          error: "",
+        });
+        setLoadingTime(0);
+    };
+    const clearLoadingInterval = () => {
+        clearInterval(loadingInterval);
+        setLoadingInterval(null);
+    };
 
     const requestData = async (_target, _tweetLimit, _relationLimit, _instagramLookupState, _depth) => {
+        setSelectedNode(null);
         wipeData();
         setDialogData({ state: true, type: "loading" });
         setLoadingState(true);
+        const numRelations = Math.pow(relationLimit, depth) + 1;
+        let timeAvg = _instagramLookupState ? 2250 + 500 : 2250;
+        timeAvg = timeAvg * 0.9;
+        setLoadingData({
+            relations: numRelations,
+            timeStart: Date.now(),
+            timeAvg: timeAvg,
+            error: ""
+        });
 
         let response = null;
         try {
-            response = await axios.get(URL + '/search', {
+            response = await axios.get(config.BACKEND_URL + '/search', {
                 params: {
                     target: _target,
                     tweetLimit: _tweetLimit,
@@ -245,10 +415,15 @@ function App() {
                 }
             });
         } catch (err) {
-            console.log(err);
+            setLoadingData({
+                relations: 0,
+                timeAvg: 0,
+                timeStart: 0,
+                error: err.response.data.error || err.response.error.toString(),
+              });
         }
 
-        if (response) {
+        if (response && response.data.success) {
             // Création des nodes
             const nodes = [];
 
@@ -258,7 +433,7 @@ function App() {
                     id: data[i].userId,
                     val: getSize(data[i].depth),
                     ...data[i],
-                    color: "blue"
+                    color: "#B10DC9"
                 });
             }
 
@@ -270,9 +445,14 @@ function App() {
             const root = Object.keys(tree)[0];
             const rootTree = tree[root];
 
-            changeColorById(nodes, root, "purple");
+            let highestOccurence = 0;
             for (let i = 0; i < rootTree.length; i++) {
-                changeColorById(nodes, rootTree[i].key, getColor(rootTree[i].occurence));
+                if (rootTree[i].occurence > highestOccurence) highestOccurence = rootTree[i].occurence;
+            }
+
+            changeColorById(nodes, root, "#0074D9");
+            for (let i = 0; i < rootTree.length; i++) {
+                changeColorById(nodes, rootTree[i].key, getColor(rootTree[i].occurence * 5 / highestOccurence));
 
                 links.push({
                     source: root,
@@ -303,71 +483,135 @@ function App() {
             setLoadingState(false);
             setDialogData({ ...dialogData, state: false });
         }
-    };
-    const changeColorById = (array, id, color) => {
-        for (let i = 0; i < array.length; i++) {
-            if (array[i].id === id) {
-                array[i].color = color;
-                break;
-            }
-        }
-    };
-    const getColor = (occurence) => {
-        if (0 <= occurence && occurence < 2) {
-            return "red";
-          } else if (2 <= occurence && occurence < 7) {
-            return "orange";
-          } else {
-            return "green";
-          }
     }
     const wipeData = () => {
         if (graphData && graphData.nodes.length > 0) {
             setGraphData({ nodes: [], links: [] });
         }
+    }
+    const graphTooltip = (node) => {
+        const tooltip = (node) => {
+            return <>
+                <Paper elevation={12} className={classes.tooltipPaper}>
+                    <Container fixed className={classes.tooltipContainer}>
+                        {
+                            node.available ? <>
+                                <div className={classes.tooltipHeader}>
+                                    <Avatar
+                                        className={classes.tooltipAvatar}
+                                        src={node.profilePictureUrl}
+                                    />
+                                    <div className={classes.tooltipName}>
+                                        <Typography>{node.name}</Typography>
+                                        <Typography variant={"caption"}>@{node.screenName}</Typography>
+                                    </div>
+                                </div>
+                                <div className={classes.tooltipBody}>
+                                    <Typography className={classes.tooltipSocialsDescription}>{node.description}</Typography>
+                                    <div className={classes.tooltipSocialsInfo}>
+                                        <Typography variant={"caption"}>{abbrNum(node.tweetCount)} Tweets</Typography>
+                                        <span>·</span>
+                                        <Typography variant={"caption"}>{abbrNum(node.followersCount)} Followers</Typography>
+                                        <span>·</span>
+                                        <Typography variant={"caption"}>{abbrNum(node.followingCount)} Followings</Typography>
+                                    </div>
+                                    <div className={classes.tooltipAccountInfo}>
+                                        <Typography variant={"body2"}>Public Twitter account</Typography>
+                                        {node.private ? <CloseIcon color={"error"} /> : <CheckIcon color={"success"} />}
+                                    </div>
+                                    {
+                                        instagramLookupState && <>
+                                            <div className={classes.tooltipAccountInfo}>
+                                                <Typography variant={"body2"}>Instagram account</Typography>
+                                                {!node.instagram ? <CloseIcon color={"error"} /> : <CheckIcon color={"success"} />}
+                                            </div>
+                                            {
+                                                node.instagram && <>
+                                                    <div className={classes.tooltipAccountInfo}>
+                                                        <Typography variant={"body2"}>Public Insta account</Typography>
+                                                        {node.instagram.private ? <CloseIcon color={"error"} /> : <CheckIcon color={"success"} />}
+                                                    </div>
+                                                    <div className={classes.tooltipInstagramPosts}>
+                                                        {
+                                                            !node.instagram.private && node.instagram.posts.map((val, i) => {
+                                                                if (i > 1) return;
+                                                                return <img className={classes.tooltipInstagramPost} src={val} key={i} alt={i} />
+                                                            })
+                                                        }
+                                                    </div>
+                                                </>
+                                            }
+                                        </>
+                                    }
+                                    <Typography textAlign={"center"}>Click to see more information</Typography>
+                                    <Typography textAlign={"center"} variant={"caption"} component={"div"}>Depth {node.depth}</Typography>
+                                </div>
+                            </> :
+                            <>
+                                <Typography textAlign={"center"}>User doesn't exists or failed to fetch.</Typography>
+                            </>
+                        }
+                    </Container>
+                </Paper>
+            </>
+        }
+        return ReactDOMServer.renderToString(tooltip(node));
+    }
+    const linkParticles = (link) => {
+        return 1 + Math.floor((link.val - 1) / 2);
+    }
+    let lastClick = 0;
+    const onNodeClick = (node, event) => {
+        console.log(node);
+        if (event.timeStamp - lastClick <= 500) {
+            setTarget(node.screenName);
+            requestData(node.screenName, tweetLimit, relationLimit, instagramLookupState, depth);
+        } else {
+            lastClick = event.timeStamp;
+            setSelectedNode(node);
+        }
     };
 
     const handleTargetChange = (event) => {
-        wipeData();
         setTarget(event.target.value);
-    };
+    }
     const handleTargetKeyPress = async (event) => {
-        if (event.keyCode === 13) {
+        if (event.keyCode === 13 && target !== "") {
             await requestData(event.target.value, tweetLimit, relationLimit, instagramLookupState, depth);
         }
-    };
+    }
     const handleTweetLimitChange = (_, value) => {
         setTweetLimit(value);
-        wipeData();
-    };
+    }
     const handleRelationLimitChange = (_, value) => {
         setRelationLimit(value);
-        wipeData();
-    };
+    }
     const handleDepthChange = (_, value) => {
         setDepth(value);
-        wipeData();
-    };
+    }
     const handleAnimationStateChange = () => {
         setAnimationState(!animationState);
-    };
+    }
     const handleInstagramLookupStateChange = () => {
         seInstagramLookupState(!instagramLookupState);
-    };
+    }
     const onClickSearch = async () => {
-        await requestData(target, tweetLimit, relationLimit, instagramLookupState, depth);
-    };
+        if (target !== "") {
+            await requestData(target, tweetLimit, relationLimit, instagramLookupState, depth);
+        }
+    }
 
     const onClickOpenDialog = (type) => {
         setDialogData({ state: true, type: type });
-    };
-    const handleDialogClose = () => {
-        setDialogData({ ...dialogData, state: false });
-    };
-    const handleDialogLoadingClose = () => {
-        handleDialogClose();
-        // clearLoading();
-      };
+    }
+    const handleDialogClose = (event, reason) => {
+        if (reason === "backdropClick" && dialogData.type === "loading") {
+            // clearLoading()
+        } else {
+            setDialogData({ ...dialogData, state: false });
+        }
+    }
+
 
     return (
         <div className={classes.home}>
@@ -425,14 +669,14 @@ function App() {
                     </Tooltip>
                     <Tooltip
                         title={`The maximum number of relations per targets. Only the top ${relationLimit} relations will be shown. 
-            Warning: Above 35 relations, you may experience lags.`}
+            Warning: Above 20 relations, you may experience lags.`}
                     >
                         <div className={classes.slider}>
                             <Slider
                                 classes={{
                                     root: classes.sliderRoot,
                                     thumb:
-                                        relationLimit < 35
+                                        relationLimit < 20
                                             ? classes.sliderThumb
                                             : classes.sliderWarning,
                                     track: classes.sliderTrack
@@ -444,7 +688,7 @@ function App() {
                             />
                             <Typography
                                 className={
-                                    relationLimit < 35
+                                    relationLimit < 20
                                         ? classes.sliderThumb
                                         : classes.sliderWarning
                                 }
@@ -454,7 +698,7 @@ function App() {
                         </div>
                     </Tooltip>
                     <Tooltip
-                        title={`Depth.`}
+                        title={`Depth of your search.`}
                     >
                         <div className={classes.slider}>
                             <Slider
@@ -473,7 +717,7 @@ function App() {
                             />
                             <Typography
                                 className={
-                                    depth < 2
+                                    depth < 3
                                         ? classes.sliderThumb
                                         : classes.sliderWarning
                                 }
@@ -510,34 +754,144 @@ function App() {
                             </Typography>
                         </div>
                     </Tooltip>
-                    <Button
-                        variant={"contained"}
-                        className={classes.button}
-                        classes={{
-                            root: classes.buttonRoot
-                        }}
-                        onClick={onClickSearch}
-                        disabled={target === ""}
-                    >
-                        Search
-                    </Button>
+                    <Tooltip 
+                        title={`You are going to lookup around ${abbrNum(Math.pow(relationLimit, depth))} twitter account and ${abbrNum(Math.pow(relationLimit, depth) * tweetLimit)} tweets. It might take long.`}>
+                        <span>
+                            <Button
+                                variant={"contained"}
+                                className={classes.button}
+                                classes={{
+                                    root: classes.buttonRoot
+                                }}
+                                onClick={onClickSearch}
+                                disabled={target === ""}
+                            >
+                                Search
+                            </Button>
+                        </span>
+                    </Tooltip>
                 </Toolbar>
             </AppBar>
-            <main>
+            <main className={classes.mainContainer}>
                 <ForceGraph2D
                     graphData={graphData}
                     height={graphSize.height}
                     width={graphSize.width}
-                    linkDirectionalParticles={animationState ? 1 : 0}
-                />
-                {/* <NoSSRForceGraph
-                    graphData={data}
-                    height={graphSize.height}
-                    width={graphSize.width}
                     nodeLabel={graphTooltip}
+                    linkDirectionalParticles={animationState ? linkParticles : 0}
+                    linkDirectionalParticlesSpeed={animationState ? linkParticles : 0}
+                    linkOpacity={0.4}
                     onNodeClick={onNodeClick}
-                    linkDirectionalParticles={animationState ? 1 : 0}
-                /> */}
+                />
+                <Box className={classes.informationPanel}>
+                    <Accordion expanded={!!selectedNode}>
+                        <AccordionSummary
+                        expandIcon={<ExpandMoreIcon />}
+                        aria-controls="panel1a-content"
+                        id="panel1a-header"
+                        >
+                            <Typography>Information</Typography>
+                        </AccordionSummary>
+                        <AccordionDetails className={classes.informationPanelDetails}>
+                            <Typography textAlign={"center"}>The current graph has {graphData.nodes.length} nodes and {graphData.links.length} links.</Typography>
+                            <br />
+                            {
+                                selectedNode ? <>
+                                    {
+                                        selectedNode.available ? <>
+                                            <div className={classes.tooltipHeader}>
+                                                <Avatar
+                                                    className={classes.tooltipAvatar}
+                                                    src={selectedNode.profilePictureUrl}
+                                                />
+                                                <div className={classes.tooltipName}>
+                                                    <Typography>{selectedNode.name}</Typography>
+                                                    <Typography variant={"caption"}>@{selectedNode.screenName}</Typography>
+                                                    <Typography variant={"caption"}>ID: {selectedNode.userId}</Typography>
+                                                </div>
+                                            </div>
+                                            <div className={classes.tooltipBody}>
+                                                <Typography className={classes.tooltipSocialsDescription}>{selectedNode.description}</Typography>
+                                                <div className={classes.tooltipSocialsInfo}>
+                                                    <Typography variant={"caption"}>{abbrNum(selectedNode.tweetCount)} Tweets</Typography>
+                                                    <span>·</span>
+                                                    <Typography variant={"caption"}>{abbrNum(selectedNode.followersCount)} Followers</Typography>
+                                                    <span>·</span>
+                                                    <Typography variant={"caption"}>{abbrNum(selectedNode.followingCount)} Followings</Typography>
+                                                </div>
+                                                <Typography variant={"caption"} textAlign={"center"} component={"div"}>
+                                                    Account creation: {moment(selectedNode.createdAt).format("D MMMM YYYY")}
+                                                </Typography>
+                                                {
+                                                    selectedNode.birthdate && 
+                                                    <>
+                                                        <Typography variant={"caption"} textAlign={"center"} component={"div"}>
+                                                            Birthdate: {moment().month(selectedNode.birthdate.month - 1).date(selectedNode.birthdate.day).format("D MMMM")}
+                                                        </Typography>
+                                                    </>
+                                                }
+                                                <div className={classes.tooltipAccountInfo}>
+                                                    <Typography variant={"body2"}>Public Twitter account</Typography>
+                                                    {selectedNode.private ? <CloseIcon color={"error"} /> : <CheckIcon color={"success"} />}
+                                                </div>
+                                                {
+                                                    instagramLookupState && <>
+                                                        <div className={classes.tooltipAccountInfo}>
+                                                            <Typography variant={"body2"}>Instagram account</Typography>
+                                                            {!selectedNode.instagram ? <CloseIcon color={"error"} /> : <CheckIcon color={"success"} />}
+                                                        </div>
+                                                        {
+                                                            selectedNode.instagram && <>
+                                                                <Typography className={classes.tooltipSocialsDescription}>{selectedNode.instagram.description}</Typography>
+                                                                <div className={classes.tooltipSocialsInfo}>
+                                                                    <Typography variant={"caption"}>{abbrNum(Number(selectedNode.instagram.postCount))} Posts</Typography>
+                                                                    <span>·</span>
+                                                                    <Typography variant={"caption"}>{abbrNum(Number(selectedNode.instagram.followerCount))} Followers</Typography>
+                                                                    <span>·</span>
+                                                                    <Typography variant={"caption"}>{abbrNum(Number(selectedNode.instagram.followingCount))} Followings</Typography>
+                                                                </div>
+                                                                {
+                                                                    selectedNode.instagram && <>
+                                                                        <div className={classes.tooltipAccountInfo}>
+                                                                            <Typography variant={"body2"}>Public Insta account</Typography>
+                                                                            {selectedNode.instagram.private ? <CloseIcon color={"error"} /> : <CheckIcon color={"success"} />}
+                                                                        </div>
+                                                                        <div className={classes.tooltipInstagramPosts}>
+                                                                            {
+                                                                                !selectedNode.instagram.private && selectedNode.instagram.posts.map((val, i) => {
+                                                                                    return <img className={classes.tooltipInstagramPost} src={val} key={i} alt={i} />
+                                                                                })
+                                                                            }
+                                                                        </div>
+                                                                    </>
+                                                                }
+                                                            </>
+                                                        }
+                                                    </>
+                                                }
+                                                <div style={{display: "flex", justifyContent: "space-around"}}>
+                                                    <Link href={'https://www.twitter.com/' + selectedNode.screenName}>Twitter</Link>
+                                                    {
+                                                        selectedNode.instagram && <Link href={'https://www.instagram.com/' + selectedNode.instagram.name}>Instagram</Link>
+                                                    }
+                                                </div>
+                                                <Typography textAlign={"center"} variant={"caption"} component={"div"}>Depth {selectedNode.depth}</Typography>
+                                            </div>
+                                        </>
+                                        :
+                                        <>
+                                            <Typography textAlign={"center"}>User doesn't exists or failed to fetch.</Typography>
+                                        </>
+                                    }
+                                </>
+                                :
+                                <>
+                                    <Typography textAlign={"center"}>Click on a node to learn more</Typography>
+                                </>
+                            }
+                        </AccordionDetails>
+                    </Accordion>
+                </Box>
             </main>
             <footer className={classes.footer}>
                 <Container maxWidth="sm">
@@ -560,14 +914,7 @@ function App() {
             </footer>
             <Dialog
                 open={dialogData.state}
-                onClose={
-                    dialogData.type !== "loading"
-                        ? handleDialogClose
-                        : handleDialogLoadingClose
-                }
-                disableBackdropClick={
-                    dialogData.type === "loading" && loadingData.error === ""
-                }
+                onClose={handleDialogClose}
                 disableEscapeKeyDown={
                     dialogData.type === "loading" && loadingData.error === ""
                 }
@@ -594,11 +941,11 @@ function App() {
                                             <CircularProgress
                                                 variant={"determinate"}
                                                 size={100}
-                                            // value={Math.min(
-                                            //     (getLoadingCounter(loadingTime, loadingData) * 100) /
-                                            //     loadingData.relations,
-                                            //     100
-                                            // )}
+                                                value={Math.min(
+                                                    (getLoadingCounter(loadingTime, loadingData) * 100) /
+                                                    loadingData.relations,
+                                                    100
+                                                )}
                                             />
                                         ) : (
                                             <CircularProgress variant={"indeterminate"} size={100} />
@@ -613,19 +960,17 @@ function App() {
                                             alignItems="center"
                                             justifyContent="center"
                                         >
-                                            {/* <Typography component="div">
-                                                {loadingData.timeStart !== 0 && loadingTime !== 0
-                                                    ? `${Math.min(
+                                            <Typography component="div">
+                                                {Math.max(0, Math.min(
                                                         getLoadingCounter(loadingTime, loadingData),
                                                         loadingData.relations
-                                                    )} / ${loadingData.relations}`
-                                                    : "0/1"}
-                                            </Typography> */}
+                                                ))} / {loadingData.relations}
+                                            </Typography>
                                         </Box>
                                     </Box>
                                     <Typography variant={"h6"}>
-                                        Estimated time left: - {" "}
-                                        {/* {loadingData.timeStart !== 0 &&
+                                        Estimated time left:{" "}
+                                        {loadingData.timeStart !== 0 &&
                                             loadingTime !== 0 &&
                                             getLoadingCounter(loadingTime, loadingData) <
                                             loadingData.relations
@@ -635,7 +980,7 @@ function App() {
                                                     loadingData.timeAvg) /
                                                 1000
                                             ).toFixed(1)}s`
-                                            : "In few seconds"} */}
+                                            : "In few seconds"}
                                     </Typography>
                                     <br />
                                 </>
@@ -647,7 +992,7 @@ function App() {
                             )}
                             <Typography variant={"caption"}>
                                 Target: {target} · Tweet limit: {tweetLimit} · Relation limit:{" "}
-                                {relationLimit} · Depth: {depth}
+                                {relationLimit} · Instagram lookup: {instagramLookupState.toString()} · Depth: {depth}
                             </Typography>
                             {loadingData.timeStart !== 0 &&
                                 loadingTime !== 0 &&
@@ -655,7 +1000,7 @@ function App() {
                                     <>
                                         <br />
                                         <Typography variant={"caption"}>
-                                            Relations: {loadingData.relations} · Avg time/rel:{" "}
+                                            Relations: ~{loadingData.relations} · Avg time/rel:{" "}
                                             {loadingData.timeAvg}ms
                                         </Typography>
                                     </>
@@ -664,7 +1009,7 @@ function App() {
                         {loadingData.error !== "" && (
                             <DialogActions>
                                 <Button
-                                    onClick={handleDialogLoadingClose}
+                                    onClick={handleDialogClose}
                                     color="primary">
                                     Close
                                 </Button>
