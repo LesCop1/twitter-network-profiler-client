@@ -562,7 +562,6 @@ function App() {
     }
     let lastClick = 0;
     const onNodeClick = (node, event) => {
-        console.log(node);
         if (event.timeStamp - lastClick <= 500) {
             setTarget(node.screenName);
             requestData(node.screenName, tweetLimit, relationLimit, instagramLookupState, depth);
